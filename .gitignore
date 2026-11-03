@@ -1,0 +1,4 @@
+build/
+vendor/speech.cpp/build/
+*.log
+.DS_Store
