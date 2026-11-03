@@ -55,13 +55,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             HotkeyMonitor.promptAccessibility()
             openSettings()
         }
-        Task { @MainActor in
-            _ = await AudioRecorder.requestPermission()
-            self.dictation.setKeepMicWarm(AppSettings.shared.keepMicWarm)
-        }
-        AppSettings.shared.$keepMicWarm.dropFirst().removeDuplicates()
-            .sink { [weak self] on in self?.dictation.setKeepMicWarm(on) }
-            .store(in: &bag)
+        Task { _ = await AudioRecorder.requestPermission() }
 
         prepareModel()
         if ProcessInfo.processInfo.environment["OILVOICE_OPEN_SETTINGS"] != nil { openSettings() }

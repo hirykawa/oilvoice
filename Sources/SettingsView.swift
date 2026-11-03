@@ -79,11 +79,6 @@ private struct GeneralTab: View {
                 Toggle("「えー」「あのー」などのフィラーを取り除く", isOn: $s.removeFillers)
                 Toggle("文末に必ず句点（。）を付ける", isOn: $s.addFinalPeriod)
             }
-            Section("マイク") {
-                Toggle("待機中もマイクを開いておく（話し始めを落とさない）", isOn: $s.keepMicWarm)
-                Text("キーを押す直前 1 秒の音も使うので、話し始めが欠けません。音声は保存も送信もせず、録音していない間は直前 1 秒だけを持って捨て続けます。オンの間はメニューバーにマイク使用中の印が出ます。Bluetooth ヘッドセットでは音楽の音質が通話用に下がるので、気になる場合はオフにしてください。")
-                    .font(.caption).foregroundColor(.secondary).fixedSize(horizontal: false, vertical: true)
-            }
             Section("その他") {
                 Toggle("効果音を鳴らす", isOn: $s.playSounds)
                 Toggle("ログイン時に起動", isOn: $launchAtLogin)

@@ -34,8 +34,6 @@ final class DictationController: ObservableObject {
 
     var isActive: Bool { phase != .idle }
 
-    func setKeepMicWarm(_ on: Bool) { recorder.setKeepWarm(on) }
-
     // MARK: - 開始
 
     func start() {

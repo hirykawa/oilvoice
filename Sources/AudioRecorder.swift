@@ -1,23 +1,16 @@
 import AVFoundation
 import Foundation
 
-/// マイクの音を 16 kHz モノラル float に変換して溜める。
-///
-/// 「待機中もマイクを開いておく」（keepWarm）のときは、録音していない間も直前 `preRollSeconds` 秒を
-/// 輪のように保持し、録音を始めた瞬間にそれを頭に付ける。話し始めが落ちず、Bluetooth の切り替えも起きない。
+/// マイクの音を 16 kHz モノラル float に変換して溜める。マイクは録音している間だけ開く。
 final class AudioRecorder {
     private let engine = AVAudioEngine()
     private var converter: AVAudioConverter?
     private let lock = NSLock()
     private var samples: [Float] = []
-    /// 待機中の直前の音（keepWarm のとき）
-    private var preRoll: [Float] = []
-    static let preRollSeconds = 1.0
     /// 録音中（samples に溜めている）か
     private(set) var isRunning = false
     /// マイク（AVAudioEngine）が動いているか
     private var engineRunning = false
-    private var keepWarm = false
     /// 直近の音量（0〜1）。ゲージ表示用。
     private(set) var level: Float = 0
     private var convertFailures = 0
@@ -55,7 +48,7 @@ final class AudioRecorder {
         engine.prepare()
         try engine.start()
         engineRunning = true
-        DebugLog.log("recorder: engine started, input \(format.sampleRate) Hz \(format.channelCount) ch, device \(AVCaptureDevice.default(for: .audio)?.localizedName ?? "?"), warm \(keepWarm)")
+        DebugLog.log("recorder: engine started, input \(format.sampleRate) Hz \(format.channelCount) ch, device \(AVCaptureDevice.default(for: .audio)?.localizedName ?? "?")")
     }
 
     private func stopEngine() {
@@ -63,31 +56,13 @@ final class AudioRecorder {
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         engineRunning = false
-        lock.lock(); preRoll.removeAll(); lock.unlock()
         DebugLog.log("recorder: engine stopped")
-    }
-
-    /// 待機中もマイクを開いておくか（設定から呼ぶ）
-    func setKeepWarm(_ on: Bool) {
-        keepWarm = on
-        guard !isFeed else { return }
-        if on {
-            if AVCaptureDevice.authorizationStatus(for: .audio) == .authorized { try? startEngine() }
-        } else if !isRunning {
-            stopEngine()
-        }
     }
 
     func start() throws {
         lock.lock()
         samples.removeAll(keepingCapacity: true)
         samples.reserveCapacity(16_000 * 60)
-        // 待機中に溜めていた直前の音を頭に付ける
-        if keepWarm, engineRunning {
-            let keep = Int(Self.preRollSeconds * Double(SpeechEngine.sampleRate))
-            samples.append(contentsOf: preRoll.suffix(keep))
-        }
-        preRoll.removeAll(keepingCapacity: true)
         lock.unlock()
         level = 0
         // 前回までに覚えた声の大きさから、最初から適切な増幅率で始める
@@ -105,7 +80,7 @@ final class AudioRecorder {
             isRunning = false
             throw error
         }
-        DebugLog.log("recorder: recording, pre-roll \(String(format: "%.2f", Double(count) / 16000))s, gain \(Int(gain))")
+        DebugLog.log("recorder: recording, gain \(Int(gain))")
     }
 
     func stop() {
@@ -114,7 +89,7 @@ final class AudioRecorder {
         feedStop = true
         if isFeed { return }
         UserDefaults.standard.set(Self.envelope, forKey: "micEnvelope")
-        if !keepWarm { stopEngine() }
+        stopEngine()
     }
 
     private var feedStop = false
@@ -163,22 +138,14 @@ final class AudioRecorder {
         guard err == nil, let ch = out.floatChannelData?[0], out.frameLength > 0 else { return }
         let n = Int(out.frameLength)
         let p = UnsafeMutableBufferPointer(start: ch, count: n)
-        // 待機中も増幅率は学習し続ける（録音開始の瞬間から適切な音量になる）
         applyGain(p)
         var sum: Float = 0
         for v in p { sum += v * v }
         let rms = (sum / Float(n)).squareRoot()
+        level = min(1, rms * 8)
+        peak = max(peak, rms)
         lock.lock()
-        if isRunning {
-            samples.append(contentsOf: p)
-            level = min(1, rms * 8)
-            peak = max(peak, rms)
-        } else {
-            // 直前の音だけを残す
-            preRoll.append(contentsOf: p)
-            let keep = Int(Self.preRollSeconds * Double(SpeechEngine.sampleRate))
-            if preRoll.count > keep * 2 { preRoll.removeFirst(preRoll.count - keep) }
-        }
+        if isRunning { samples.append(contentsOf: p) }
         lock.unlock()
     }
 
