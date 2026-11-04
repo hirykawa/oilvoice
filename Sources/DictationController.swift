@@ -70,6 +70,8 @@ final class DictationController: ObservableObject {
             lastPartialAt = 0
             fixedText = ""
             chunkEnd = 0
+            pauses = []
+            lastVoice = 0
             tailText = ""
             do { detector = try SpeechEngine.LiveDetector(engine: engine) }
             catch { detector = nil; DebugLog.log("detector failed: \(error.localizedDescription)") }
@@ -78,6 +80,9 @@ final class DictationController: ObservableObject {
         onShow?()
         onActiveChanged?(true)
         if settings.playSounds { NSSound(named: "Tink")?.play() }
+        if let sec = ProcessInfo.processInfo.environment["OILVOICE_AUTOCONFIRM"].flatMap(Double.init) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + sec) { [weak self] in self?.confirm(reason: "test") }
+        }
         timer = Timer.scheduledTimer(withTimeInterval: 0.12, repeats: true) { [weak self] _ in self?.tick() }
         RunLoop.main.add(timer!, forMode: .common)
     }
@@ -95,7 +100,7 @@ final class DictationController: ObservableObject {
                 guard gen == self.generation, self.phase == .listening else { return }
                 self.committedText = committed
                 self.partialText = partial
-                let (_, send) = TextFormatter.extractSendCommand(TextFormatter.join([committed, partial]), settings: self.settings)
+                let (_, send) = TextFormatter.extractSendCommand(TextFormatter.concat([committed, partial]), settings: self.settings)
                 self.willSend = send
                 if autoSend { self.confirm(reason: "autoSend") }  // 「送信して」で話し終えたら、そのまま送信
             }
@@ -126,42 +131,57 @@ final class DictationController: ObservableObject {
             return TextFormatter.clean(t, settings: settings)
         }
 
-        /// 文（committedEnd 〜 end）を丸ごと認識し直して確定する
-        func commitSentence(until end: Int, why: String) {
+        /// committedEnd 〜 end を丸ごと認識し直して確定する（長くなったときと、最後だけ）
+        func commit(until end: Int, why: String) {
             let c = recognize(committedEnd, end)
             if !c.isEmpty { committedParts.append(c) }
-            DebugLog.log(String(format: "sentence %.1f-%.1fs (%@): ", Double(committedEnd) / 16000, Double(end) / 16000, why) + c)
+            DebugLog.log(String(format: "commit %.1f-%.1fs (%@): ", Double(committedEnd) / 16000, Double(end) / 16000, why) + c)
             committedEnd = end
             chunkEnd = end
             fixedText = ""
             tailText = ""
             lastPartialAt = 0
+            pauses.removeAll { $0 <= end }
         }
 
-        // 文の切れ目（息継ぎ）が来たら、その文を丸ごと認識し直して確定
-        var sentenceEnded = false
+        // 息継ぎ（VAD の区間の終わり）は確定には使わず、区切り候補と「声がしていた位置」として覚える
+        var paused = false
         for (_, e) in detector.takeNewRegions() {
             let b = min(n, Int(e * Double(sr)))
-            if b > committedEnd + sr / 2 {
-                commitSentence(until: b, why: "pause")
-                sentenceEnded = true
-            }
+            lastVoice = max(lastVoice, b)
+            if b > committedEnd { pauses.append(b) }
+            paused = true
         }
         let speaking = detector.speakingStart()
+        if speaking != nil { lastVoice = n }
         if n / 8000 != lastLoggedHalfSecond {
             lastLoggedHalfSecond = n / 8000
-            DebugLog.log(String(format: "tick: %.1fs audio, sentence %.1fs, tail %.1fs, peakRMS %.4f, gain %.0f, speaking %@", Double(n) / 16000, Double(n - committedEnd) / 16000, Double(n - chunkEnd) / 16000, recorder.takePeak(), recorder.gain, speaking.map { String(format: "%.2f", $0) } ?? "no"))
+            DebugLog.log(String(format: "tick: %.1fs audio, unit %.1fs, tail %.1fs, peakRMS %.4f, gain %.0f, speaking %@", Double(n) / 16000, Double(n - committedEnd) / 16000, Double(n - chunkEnd) / 16000, recorder.takePeak(), recorder.gain, speaking.map { String(format: "%.2f", $0) } ?? "no"))
         }
 
         if final {
-            commitSentence(until: n, why: "final")
+            // 話し終わってからの無音は含めない（増幅した雑音から言葉をでっち上げないように）
+            let end: Int
+            if lastVoice > committedEnd { end = min(n, lastVoice + sr * 2 / 5) }
+            else if committedParts.isEmpty { end = n }   // VAD が一度も声を拾わなかったときの保険
+            else { end = committedEnd }
+            if end > committedEnd { commit(until: end, why: "final") }
         } else {
-            // 息継ぎがないまま文が長くなりすぎたら（25 秒超）、静かな瞬間で文を確定
-            if n - committedEnd > sr * 25 {
-                commitSentence(until: quietestPoint(from: committedEnd + sr * 10, to: n - sr), why: "long")
+            // 20 秒を超えたら、手前の息継ぎ（なければいちばん静かな瞬間）までを確定する
+            if n - committedEnd > sr * 20 {
+                let cut = pauses.last(where: { $0 - committedEnd >= sr * 5 && $0 < n - sr / 2 })
+                    ?? quietestPoint(from: committedEnd + sr * 10, to: n - sr)
+                commit(until: cut, why: "long")
             }
-            // 末尾が 3 秒を超えたら、静かな瞬間で区切り、文の頭からそこまでをまとめて認識して固定
-            if n - chunkEnd > sr * 3 {
+            if paused, speaking == nil, n - committedEnd > sr * 3 / 10 {
+                // 息継ぎしたら、ここまでの文全体を認識し直して表示を更新（確定はしない）
+                fixedText = recognize(committedEnd, n)
+                chunkEnd = n
+                tailText = ""
+                lastPartialAt = n
+                DebugLog.log("pause: \(fixedText)")
+            } else if n - chunkEnd > sr * 3 {
+                // 末尾が 3 秒を超えたら、静かな瞬間で区切り、頭からそこまでをまとめて認識して固定
                 let cut = quietestPoint(from: chunkEnd + sr * 2, to: n - sr * 3 / 10)
                 fixedText = stripPeriod(recognize(committedEnd, cut))
                 chunkEnd = cut
@@ -177,11 +197,12 @@ final class DictationController: ObservableObject {
             }
         }
 
-        let fixed = TextFormatter.join(committedParts + [fixedText])
+        // つなぎ目に句点は足さない（句読点はモデルが文全体を見て付けたものだけ）
+        let fixed = TextFormatter.concat(committedParts + [fixedText])
         let tail = final ? "" : tailText
-        // 「送信して」で言い終えて、息継ぎ（文の切れ目）が来たら自動で送信
+        // 「送信して」で言い終えて息継ぎしたら、自動で送信
         var autoSend = false
-        if !final, sentenceEnded, speaking == nil, tail.isEmpty, settings.autoSendEnabled {
+        if !final, paused, speaking == nil, tail.isEmpty, settings.autoSendEnabled {
             autoSend = TextFormatter.extractSendCommand(fixed, settings: settings).1
         }
         return (fixed, tail, autoSend)
@@ -195,6 +216,8 @@ final class DictationController: ObservableObject {
     }
 
     private var fixedText = ""
+    private var pauses: [Int] = []
+    private var lastVoice = 0
     private var chunkEnd = 0
     private var tailText = ""
     private var lastLoggedHalfSecond = -1
@@ -278,6 +301,8 @@ final class DictationController: ObservableObject {
     private func insert(_ text: String, send: Bool) {
         DebugLog.log("insert send=\(send): \(text)")
         reset()
+        // テストモードでは入力欄に貼り付けない
+        if ProcessInfo.processInfo.environment["OILVOICE_FEED"] != nil { return }
         // オーバーレイが消えてから入力する
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.03) {
             if text.isEmpty {

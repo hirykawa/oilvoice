@@ -17,6 +17,9 @@ enum TextFormatter {
             t = fillerPattern.stringByReplacingMatches(in: t, range: NSRange(t.startIndex..., in: t), withTemplate: "")
         }
         t = applyDictionary(t, s.dictionary)
+        // 日本語の中の半角の , . は 、 。 にそろえる（3.5 や a, b のような英数字の間はそのまま）
+        t = t.replacingOccurrences(of: "(?<=[^\\x00-\\x7F]),\\s*|,\\s*(?=[^\\x00-\\x7F])", with: "、", options: .regularExpression)
+        t = t.replacingOccurrences(of: "(?<=[^\\x00-\\x7F])\\.(?=\\s|$|[^\\x00-\\x7F])", with: "。", options: .regularExpression)
         // 重なった句読点をまとめる
         t = t.replacingOccurrences(of: "、+", with: "、", options: .regularExpression)
         t = t.replacingOccurrences(of: "。+", with: "。", options: .regularExpression)
@@ -35,7 +38,19 @@ enum TextFormatter {
         return t
     }
 
-    /// 区間ごとのテキストをつなぐ
+    /// 句点を足さずにつなぐ（英字どうしはスペース）
+    static func concat(_ parts: [String]) -> String {
+        var out = ""
+        for p in parts where !p.isEmpty {
+            if let last = out.last, last.isASCII, last.isLetter || last.isNumber, let first = p.first, first.isASCII, first.isLetter || first.isNumber {
+                out += " "
+            }
+            out += p
+        }
+        return out
+    }
+
+    /// 区間ごとのテキストをつなぐ（ファイルの文字起こし用。区間は無音で分かれているので句点を補う）
     static func join(_ parts: [String]) -> String {
         var out = ""
         for p in parts where !p.isEmpty {

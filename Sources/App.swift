@@ -37,7 +37,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusItem.menu = menu
 
         overlay = OverlayPanel(controller: dictation)
-        dictation.onShow = { [weak self] in self?.overlay.present() }
+        let testMode = ProcessInfo.processInfo.environment["OILVOICE_FEED"] != nil
+        // テストモードではパネルを出さない（使っている人の画面を邪魔しない）
+        dictation.onShow = { [weak self] in if !testMode { self?.overlay.present() } }
         dictation.onHide = { [weak self] in self?.overlay.dismiss() }
         dictation.onActiveChanged = { [weak self] active in
             self?.hotkeys.sessionActive = active
