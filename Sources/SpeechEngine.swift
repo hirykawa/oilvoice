@@ -134,7 +134,7 @@ final class SpeechEngine {
             var req: OpaquePointer?
             try SpeechEngine.check(speech_request_new(vad, &req), "request")
             defer { speech_request_free(req) }
-            _ = speech_request_set_int(req, SPEECH_OPT_MIN_SILENCE_DURATION_MS, 450)
+            _ = speech_request_set_int(req, SPEECH_OPT_MIN_SILENCE_DURATION_MS, 350)
             _ = speech_request_set_int(req, SPEECH_OPT_SPEECH_PAD_MS, 150)
             _ = speech_request_set_float(req, SPEECH_OPT_MAX_SPEECH_DURATION_S, 120)
             try SpeechEngine.check(speech_detection_start(req, Int32(SpeechEngine.sampleRate), &det), "検出開始")

@@ -68,8 +68,9 @@ final class DictationController: ObservableObject {
             committedParts = []
             committedEnd = 0
             lastPartialAt = 0
-            windowText = ""
-            boundaries = []
+            fixedText = ""
+            chunkEnd = 0
+            tailText = ""
             do { detector = try SpeechEngine.LiveDetector(engine: engine) }
             catch { detector = nil; DebugLog.log("detector failed: \(error.localizedDescription)") }
         }
@@ -101,9 +102,12 @@ final class DictationController: ObservableObject {
         }
     }
 
-    /// 話している間は「確定位置から今まで」の音声全体を毎回まとめて認識し直す（文脈が切れないように）。
-    /// 長くなったら（25 秒超）、手前の無音の切れ目までを確定して、そこから先を認識し直す。asr キューの上で呼ぶ。
-    /// 戻り値：（表示する全文、未使用、自動送信するか）
+    /// 認識の進め方
+    /// - 話している途中：約 3 秒ごとに静かな瞬間で区切り、「文の頭からそこまで」をまとめて認識して表示を固定（fixedText）。
+    ///   その間に 0.2 秒ごとに認識し直すのは、区切りより後ろの末尾（tail）だけ。
+    /// - 文の切れ目（VAD が息継ぎを検出）：その文の音声全体をまとめて認識し直して確定する。
+    /// - 確定（final）：まだ切れ目が来ていない文も、まとめて認識し直す。
+    /// asr キューの上で呼ぶ。戻り値：（固定した文字、変わりうる末尾、自動送信するか）
     private func process(final: Bool) -> (String, String, Bool) {
         guard let detector else { return ("", "", false) }
         let sr = SpeechEngine.sampleRate
@@ -115,58 +119,85 @@ final class DictationController: ObservableObject {
         }
         if final { detector.end() }
 
-        // VAD は「どこで息継ぎしたか」を知るためだけに使う
-        var regionEnded = false
-        for (_, e) in detector.takeNewRegions() {
-            let b = min(n, Int(e * Double(sr)))
-            if b > committedEnd { boundaries.append(b) }
-            regionEnded = true
-        }
-        let speaking = detector.speakingStart()
-        if n / 8000 != lastLoggedHalfSecond {
-            lastLoggedHalfSecond = n / 8000
-            DebugLog.log(String(format: "tick: %.1fs audio, window %.1fs, peakRMS %.4f, gain %.0f, speaking %@", Double(n) / 16000, Double(n - committedEnd) / 16000, recorder.takePeak(), recorder.gain, speaking.map { String(format: "%.2f", $0) } ?? "no"))
-        }
-
         func recognize(_ from: Int, _ to: Int) -> String {
+            guard to - from > sr * 3 / 10 else { return "" }
             let audio = recorder.slice(from, to)
             guard let t = try? audio.withUnsafeBufferPointer({ try engine.transcribeOnQueue($0, keywords: keywords, alpha: alpha) }) else { return "" }
             return TextFormatter.clean(t, settings: settings)
         }
 
-        // 窓が長くなったら、手前の切れ目までを確定
-        if !final, n - committedEnd > sr * 25 {
-            let cut = boundaries.last(where: { $0 - committedEnd >= sr * 5 && $0 < n - sr / 2 })
-                ?? quietestPoint(from: committedEnd + sr * 10, to: n - sr)
-            let c = recognize(committedEnd, cut)
+        /// 文（committedEnd 〜 end）を丸ごと認識し直して確定する
+        func commitSentence(until end: Int, why: String) {
+            let c = recognize(committedEnd, end)
             if !c.isEmpty { committedParts.append(c) }
-            DebugLog.log(String(format: "commit %.1f-%.1fs: ", Double(committedEnd) / 16000, Double(cut) / 16000) + c)
-            committedEnd = cut
-            boundaries.removeAll { $0 <= cut }
-            windowText = ""
+            DebugLog.log(String(format: "sentence %.1f-%.1fs (%@): ", Double(committedEnd) / 16000, Double(end) / 16000, why) + c)
+            committedEnd = end
+            chunkEnd = end
+            fixedText = ""
+            tailText = ""
             lastPartialAt = 0
         }
 
-        // 確定位置から今までを丸ごと認識し直す
-        let length = n - committedEnd
-        if final {
-            windowText = length > sr * 3 / 10 ? recognize(committedEnd, n) : ""
-            DebugLog.log("final window: \(windowText)")
-        } else if length > sr / 4, n - lastPartialAt >= sr / 5 || regionEnded {
-            let t = recognize(committedEnd, n)
-            if t != windowText { DebugLog.log("window: \(t)") }
-            windowText = t
-            lastPartialAt = n
+        // 文の切れ目（息継ぎ）が来たら、その文を丸ごと認識し直して確定
+        var sentenceEnded = false
+        for (_, e) in detector.takeNewRegions() {
+            let b = min(n, Int(e * Double(sr)))
+            if b > committedEnd + sr / 2 {
+                commitSentence(until: b, why: "pause")
+                sentenceEnded = true
+            }
+        }
+        let speaking = detector.speakingStart()
+        if n / 8000 != lastLoggedHalfSecond {
+            lastLoggedHalfSecond = n / 8000
+            DebugLog.log(String(format: "tick: %.1fs audio, sentence %.1fs, tail %.1fs, peakRMS %.4f, gain %.0f, speaking %@", Double(n) / 16000, Double(n - committedEnd) / 16000, Double(n - chunkEnd) / 16000, recorder.takePeak(), recorder.gain, speaking.map { String(format: "%.2f", $0) } ?? "no"))
         }
 
-        let full = TextFormatter.join(committedParts + [windowText])
-        // 「送信して」で言い終えて、息継ぎ（区間の終わり）が来たら自動で送信
-        var autoSend = false
-        if !final, regionEnded, speaking == nil, settings.autoSendEnabled {
-            autoSend = TextFormatter.extractSendCommand(full, settings: settings).1
+        if final {
+            commitSentence(until: n, why: "final")
+        } else {
+            // 息継ぎがないまま文が長くなりすぎたら（25 秒超）、静かな瞬間で文を確定
+            if n - committedEnd > sr * 25 {
+                commitSentence(until: quietestPoint(from: committedEnd + sr * 10, to: n - sr), why: "long")
+            }
+            // 末尾が 3 秒を超えたら、静かな瞬間で区切り、文の頭からそこまでをまとめて認識して固定
+            if n - chunkEnd > sr * 3 {
+                let cut = quietestPoint(from: chunkEnd + sr * 2, to: n - sr * 3 / 10)
+                fixedText = stripPeriod(recognize(committedEnd, cut))
+                chunkEnd = cut
+                lastPartialAt = 0
+                DebugLog.log("fixed: \(fixedText)")
+            }
+            // 末尾だけを認識し直す
+            if n - chunkEnd > sr / 4, n - lastPartialAt >= sr / 5 {
+                tailText = recognize(chunkEnd, n)
+                lastPartialAt = n
+            } else if n - chunkEnd <= sr / 4 {
+                tailText = ""
+            }
         }
-        return (full, "", autoSend)
+
+        let fixed = TextFormatter.join(committedParts + [fixedText])
+        let tail = final ? "" : tailText
+        // 「送信して」で言い終えて、息継ぎ（文の切れ目）が来たら自動で送信
+        var autoSend = false
+        if !final, sentenceEnded, speaking == nil, tail.isEmpty, settings.autoSendEnabled {
+            autoSend = TextFormatter.extractSendCommand(fixed, settings: settings).1
+        }
+        return (fixed, tail, autoSend)
     }
+
+    /// 文の途中で区切ったので、末尾の句点は外す
+    private func stripPeriod(_ s: String) -> String {
+        var t = s
+        while let l = t.last, "。．.".contains(l) { t.removeLast() }
+        return t
+    }
+
+    private var fixedText = ""
+    private var chunkEnd = 0
+    private var tailText = ""
+    private var lastLoggedHalfSecond = -1
 
     /// [from, to) の中で、いちばん静かな 0.1 秒の中心（単語の途中で切らないため）。後ろ寄りを少し優先する
     private func quietestPoint(from: Int, to: Int) -> Int {
@@ -186,9 +217,6 @@ final class DictationController: ObservableObject {
         return best
     }
 
-    private var windowText = ""
-    private var boundaries: [Int] = []
-    private var lastLoggedHalfSecond = -1
 
     // MARK: - 確定・取り消し
 

@@ -49,7 +49,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         hotkeys.onCancel = { [weak self] in self?.dictation.cancel() }
 
         // アクセシビリティ（キー監視・入力）とマイクの許可
-        if HotkeyMonitor.hasAccessibility {
+        if ProcessInfo.processInfo.environment["OILVOICE_FEED"] != nil {
+            // テストモード：キー監視をしない（テスト中の Return で入力欄に入らないように）
+        } else if HotkeyMonitor.hasAccessibility {
             startHotkeys()
         } else {
             HotkeyMonitor.promptAccessibility()
