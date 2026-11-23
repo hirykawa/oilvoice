@@ -70,13 +70,12 @@ struct DictionaryEntry: Codable, Identifiable, Equatable, Hashable {
 }
 
 enum AIProvider: String, Codable, CaseIterable, Identifiable {
-    case none, chatgpt, opencodeGo
+    case none, chatgpt
     var id: String { rawValue }
     var label: String {
         switch self {
         case .none: return "使わない"
         case .chatgpt: return "ChatGPT（サブスク枠）"
-        case .opencodeGo: return "OpenCode Go"
         }
     }
 }
@@ -136,8 +135,6 @@ final class AppSettings: ObservableObject {
     @Published var aiProvider: AIProvider
     @Published var chatgptModel: String
     @Published var chatgptReasoning: String
-    @Published var opencodeModel: String
-    @Published var opencodeBaseURL: String
     @Published var aiPrompt: String
     @Published var aiTimeout: Double
     @Published var playSounds: Bool
@@ -170,9 +167,11 @@ final class AppSettings: ObservableObject {
         modelVariant = ModelVariant(rawValue: d.string(forKey: "modelVariant") ?? "") ?? .q4_k
         aiProvider = AIProvider(rawValue: d.string(forKey: "aiProvider") ?? "") ?? .none
         chatgptModel = d.string(forKey: "chatgptModel") ?? "gpt-5.6-luna"
-        chatgptReasoning = d.string(forKey: "chatgptReasoning") ?? "low"
-        opencodeModel = d.string(forKey: "opencodeModel") ?? "glm-5.3-flash"
-        opencodeBaseURL = d.string(forKey: "opencodeBaseURL") ?? "https://opencode.ai/inference/go/v1"
+        let r = d.string(forKey: "chatgptReasoning") ?? "low"
+        chatgptReasoning = r == "minimal" ? "low" : r
+        // 廃止した OpenCode Go の設定と API キーを片付ける
+        d.removeObject(forKey: "opencodeModel"); d.removeObject(forKey: "opencodeBaseURL")
+        Keychain.set("opencode.go.key", nil)
         aiPrompt = d.string(forKey: "aiPrompt") ?? Self.defaultPrompt
         aiTimeout = d.object(forKey: "aiTimeout") as? Double ?? 12
         playSounds = d.object(forKey: "playSounds") as? Bool ?? true
@@ -197,8 +196,6 @@ final class AppSettings: ObservableObject {
         d.set(aiProvider.rawValue, forKey: "aiProvider")
         d.set(chatgptModel, forKey: "chatgptModel")
         d.set(chatgptReasoning, forKey: "chatgptReasoning")
-        d.set(opencodeModel, forKey: "opencodeModel")
-        d.set(opencodeBaseURL, forKey: "opencodeBaseURL")
         d.set(aiPrompt, forKey: "aiPrompt")
         d.set(aiTimeout, forKey: "aiTimeout")
         d.set(playSounds, forKey: "playSounds")

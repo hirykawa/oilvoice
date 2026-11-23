@@ -1,21 +1,13 @@
 import Foundation
 
-/// AI 整形。ChatGPT（Codex のバックエンド、サブスク枠）か OpenCode Go（API キー）に投げる。
+/// AI 整形。ChatGPT（Codex のバックエンド、サブスク枠）に投げる。
 enum AIFormatter {
     static let chatgptModels = ["gpt-5.6-luna", "gpt-6-luna", "gpt-5.6-terra", "gpt-6.1-terra", "gpt-5.6-sol", "gpt-6-sol", "gpt-6.1-sol"]
-    static let opencodeModels = ["glm-5.3-flash", "deepseek-v4.1-flash", "minimax-m3.1-flash", "mimo-v2.6-flash",
-                                 "kimi-k3", "glm-5.3", "deepseek-v4-pro"]
-
-    static var opencodeKey: String? {
-        get { Keychain.get("opencode.go.key") }
-        set { Keychain.set("opencode.go.key", newValue) }
-    }
 
     static func isAvailable(_ s: AppSettings) -> Bool {
         switch s.aiProvider {
         case .none: return false
         case .chatgpt: return ChatGPTAuth.shared.isLoggedIn
-        case .opencodeGo: return !(opencodeKey ?? "").isEmpty
         }
     }
 
@@ -34,7 +26,6 @@ enum AIFormatter {
         switch s.aiProvider {
         case .none: return text
         case .chatgpt: out = try await chatgpt(text, s)
-        case .opencodeGo: out = try await opencode(text, s)
         }
         let t = out.trimmingCharacters(in: .whitespacesAndNewlines)
         return t.isEmpty ? text : t
@@ -110,36 +101,5 @@ enum AIFormatter {
             }
         }
         return completed ?? out
-    }
-
-    // MARK: OpenCode Go（OpenAI 互換 Chat Completions）
-
-    private static func opencode(_ text: String, _ s: AppSettings) async throws -> String {
-        guard let key = opencodeKey, !key.isEmpty else { throw SpeechEngine.Failure(message: "OpenCode Go の API キーがありません") }
-        let base = s.opencodeBaseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/ "))
-        var req = URLRequest(url: URL(string: "\(base)/chat/completions")!)
-        req.httpMethod = "POST"
-        req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.httpBody = try JSONSerialization.data(withJSONObject: [
-            "model": s.opencodeModel,
-            "messages": [
-                ["role": "system", "content": systemPrompt(s)],
-                ["role": "user", "content": text],
-            ],
-            "temperature": 0.2,
-            "stream": false,
-        ] as [String: Any])
-        let (data, resp) = try await URLSession.shared.data(for: req)
-        let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
-        guard code == 200 else {
-            throw SpeechEngine.Failure(message: "OpenCode Go: HTTP \(code) \(String(data: data, encoding: .utf8)?.prefix(300) ?? "")")
-        }
-        let j = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-        let msg = ((j?["choices"] as? [[String: Any]])?.first?["message"] as? [String: Any])
-        var content = msg?["content"] as? String ?? ""
-        // 推論モデルが <think> を混ぜることがあるので取り除く
-        content = content.replacingOccurrences(of: "(?s)<think>.*?</think>", with: "", options: .regularExpression)
-        return content
     }
 }

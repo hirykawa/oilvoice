@@ -82,7 +82,7 @@ private struct GeneralTab: View {
             Section("その他") {
                 Toggle("効果音を鳴らす", isOn: $s.playSounds)
                 Toggle("ログイン時に起動", isOn: $launchAtLogin)
-                    .onChange(of: launchAtLogin) { on in
+                    .onChange(of: launchAtLogin) { _, on in
                         do { if on { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() } }
                         catch { launchAtLogin = SMAppService.mainApp.status == .enabled }
                     }
@@ -221,7 +221,52 @@ private struct DictionaryTab: View {
             }
             Text("「認識を強める」をオフにすると、認識結果の置換（読み → 表記）だけを行います。強めすぎると、言っていない語が出やすくなります。")
                 .font(.caption).foregroundColor(.secondary)
+            Divider().padding(.top, 4)
+            Text("Claude・ChatGPT で編集する").font(.headline)
+            VStack(alignment: .leading, spacing: 6) {
+                Text("1.「AI への指示をコピー」を押し、Claude か ChatGPT に貼り付けて、最後に頼みたいことを書きます（例：「医療用語を 20 個追加して」「読みを見直して」）。\n2. 返ってきた JSON をコピーし、「クリップボードから読み込む」を押します。\nファイルでやりとりするときは、書き出したファイルを添付して頼み、返ってきたファイルを読み込みます。")
+                    .font(.caption).foregroundColor(.secondary).fixedSize(horizontal: false, vertical: true)
+                HStack {
+                    Button("AI への指示をコピー") {
+                        DictionaryTransfer.copyToPasteboard(DictionaryTransfer.prompt(s.dictionary))
+                        status = "コピーしました。Claude か ChatGPT に貼り付けてください。"
+                    }
+                    Button("クリップボードから読み込む") {
+                        load(NSPasteboard.general.string(forType: .string))
+                    }
+                    Spacer()
+                    Button("ファイルに書き出す") { DictionaryTransfer.save(s.dictionary) }
+                    Button("ファイルから読み込む") { load(DictionaryTransfer.openFile(), fromFile: true) }
+                }
+                if !status.isEmpty { Text(status).font(.caption).foregroundColor(.secondary) }
+            }
         }
+        .alert("辞書を読み込む", isPresented: Binding(get: { pending != nil }, set: { if !$0 { pending = nil } })) {
+            Button("置き換える") { apply(replace: true) }
+            Button("追加・更新する") { apply(replace: false) }
+            Button("キャンセル", role: .cancel) { pending = nil }
+        } message: {
+            Text("\(pending?.count ?? 0) 語を読み込みます。今の辞書（\(s.dictionary.count) 語）をまるごと置き換えるか、同じ表記の語だけ更新して残りは追加するかを選んでください。")
+        }
+    }
+
+    @State private var pending: [DictionaryEntry]?
+    @State private var status = ""
+
+    private func load(_ text: String?, fromFile: Bool = false) {
+        guard let text else { if !fromFile { status = "クリップボードが空です。" }; return }
+        guard let list = DictionaryTransfer.parse(text) else {
+            status = "辞書の JSON として読めませんでした。返答の JSON 部分だけをコピーしているか確認してください。"
+            return
+        }
+        pending = list
+    }
+
+    private func apply(replace: Bool) {
+        guard let list = pending else { return }
+        s.dictionary = replace ? list : DictionaryTransfer.merge(s.dictionary, list)
+        status = "\(list.count) 語を読み込みました（今の辞書：\(s.dictionary.count) 語）。"
+        pending = nil
     }
 
     private func add() {
@@ -237,7 +282,6 @@ private struct DictionaryTab: View {
 private struct AITab: View {
     @ObservedObject var s = AppSettings.shared
     @ObservedObject var auth = ChatGPTAuth.shared
-    @State private var key = AIFormatter.opencodeKey ?? ""
     @State private var testInput = "えーと、明日の会議なんですけど、あのー、10時からに変更でお願いします"
     @State private var testOutput = ""
     @State private var testing = false
@@ -245,9 +289,10 @@ private struct AITab: View {
     var body: some View {
         Form {
             Section {
-                Picker("使うサービス", selection: $s.aiProvider) {
-                    ForEach(AIProvider.allCases) { Text($0.label).tag($0) }
-                }
+                Toggle("AI で整形する", isOn: Binding(
+                    get: { s.aiProvider != .none },
+                    set: { s.aiProvider = $0 ? .chatgpt : .none }
+                ))
                 Text("確定したときに、文字起こしを AI で読みやすく整えてから入力します。音声はクラウドに送らず、文字だけを送ります。")
                     .font(.caption).foregroundColor(.secondary)
             }
@@ -269,19 +314,9 @@ private struct AITab: View {
                     ModelField(title: "モデル", value: $s.chatgptModel, options: AIFormatter.chatgptModels)
                     Picker("推論の強さ", selection: $s.chatgptReasoning) {
                         Text("指定しない").tag("")
-                        Text("minimal").tag("minimal")
                         Text("low（速い）").tag("low")
                         Text("medium").tag("medium")
                     }
-                }
-            }
-            if s.aiProvider == .opencodeGo {
-                Section("OpenCode Go") {
-                    SecureField("API キー", text: $key)
-                        .onChange(of: key) { v in AIFormatter.opencodeKey = v.trimmingCharacters(in: .whitespacesAndNewlines) }
-                    ModelField(title: "モデル", value: $s.opencodeModel, options: AIFormatter.opencodeModels)
-                    TextField("エンドポイント", text: $s.opencodeBaseURL)
-                    Link("OpenCode Go の API キーを取得", destination: URL(string: "https://opencode.ai/auth")!).font(.caption)
                 }
             }
             if s.aiProvider != .none {
@@ -343,7 +378,7 @@ private struct ModelTab: View {
                         Text(v.label + (m.isInstalled(v) ? "  ✓" : "")).tag(v)
                     }
                 }
-                .onChange(of: s.modelVariant) { _ in AppDelegate.shared?.prepareModel() }
+                .onChange(of: s.modelVariant) { AppDelegate.shared?.prepareModel() }
                 Text("精度はどれもほぼ同じ（FLEURS 日本語の CER 4.4% 前後）で、速さも変わりません。小さいほどメモリが少なくて済みます。")
                     .font(.caption).foregroundColor(.secondary)
                 HStack {

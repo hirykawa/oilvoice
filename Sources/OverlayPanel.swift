@@ -138,8 +138,8 @@ struct OverlayView: View {
                         })
                         .id("text")
                 }
-                .onChange(of: controller.partialText) { _ in proxy.scrollTo("text", anchor: .bottom) }
-                .onChange(of: controller.committedText) { _ in proxy.scrollTo("text", anchor: .bottom) }
+                .onChange(of: controller.partialText) { proxy.scrollTo("text", anchor: .bottom) }
+                .onChange(of: controller.committedText) { proxy.scrollTo("text", anchor: .bottom) }
             }
             HStack(spacing: 0) {
                 Button(action: { controller.cancel() }) {
