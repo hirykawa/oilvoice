@@ -3,7 +3,10 @@ import Foundation
 
 /// マイクの音を 16 kHz モノラル float に変換して溜める。マイクは録音している間だけ開く。
 final class AudioRecorder {
-    private let engine = AVAudioEngine()
+    /// マイクを開くたびに作り直す。使い回すと、マイクが切り替わったあとに前のマイクの形式のまま
+    /// installTap して例外で落ちる（48 kHz の外付けマイク → 16 kHz の USB スピーカーフォンなど）。
+    private var engine = AVAudioEngine()
+    private var configObserver: NSObjectProtocol?
     private var converter: AVAudioConverter?
     private let lock = NSLock()
     private var samples: [Float] = []
@@ -35,6 +38,7 @@ final class AudioRecorder {
 
     private func startEngine() throws {
         guard !engineRunning else { return }
+        engine = AVAudioEngine()
         let input = engine.inputNode
         let format = input.outputFormat(forBus: 0)
         guard format.sampleRate > 0, format.channelCount > 0 else {
@@ -48,10 +52,22 @@ final class AudioRecorder {
         engine.prepare()
         try engine.start()
         engineRunning = true
+        // 録音中にマイクが切り替わると engine が止まるので、新しいマイクで開き直す
+        configObserver = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main
+        ) { [weak self] _ in self?.restartEngine() }
         DebugLog.log("recorder: engine started, input \(format.sampleRate) Hz \(format.channelCount) ch, device \(AVCaptureDevice.default(for: .audio)?.localizedName ?? "?")")
     }
 
+    private func restartEngine() {
+        guard engineRunning, isRunning else { return }
+        DebugLog.log("recorder: input device changed, reopening")
+        stopEngine()
+        do { try startEngine() } catch { DebugLog.log("recorder: reopen failed: \(error.localizedDescription)") }
+    }
+
     private func stopEngine() {
+        if let o = configObserver { NotificationCenter.default.removeObserver(o); configObserver = nil }
         guard engineRunning else { return }
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
