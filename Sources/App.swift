@@ -30,8 +30,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if let tab = ProcessInfo.processInfo.environment["OILVOICE_OPEN_SETTINGS"] { SettingsView.initialTab = Int(tab) ?? 0 }
         speech_log_set(nil, nil)
 
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        statusItem.button?.image = NSImage(systemSymbolName: "waveform", accessibilityDescription: "OilVoice")
+        statusItem = NSStatusBar.system.statusItem(withLength: AppInfo.isDev ? NSStatusItem.variableLength : NSStatusItem.squareLength)
+        statusItem.button?.image = NSImage(systemSymbolName: "waveform", accessibilityDescription: AppInfo.name)
+        if AppInfo.isDev {
+            // 開発版はアイコンの横に「Dev」と出して、製品版と見分ける
+            statusItem.button?.title = "Dev"
+            statusItem.button?.imagePosition = .imageLeading
+        }
         let menu = NSMenu()
         menu.delegate = self
         statusItem.menu = menu
@@ -44,7 +49,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         dictation.onActiveChanged = { [weak self] active in
             self?.hotkeys.sessionActive = active
             self?.statusItem.button?.image = NSImage(systemSymbolName: active ? "waveform.circle.fill" : "waveform",
-                                                     accessibilityDescription: "OilVoice")
+                                                     accessibilityDescription: AppInfo.name)
         }
         hotkeys.onTrigger = { [weak self] in self?.toggle() }
         hotkeys.onConfirm = { [weak self] in self?.dictation.confirm() }
@@ -136,13 +141,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             menu.addItem(h)
         }
         menu.addItem(.separator())
-        if let r = MainActor.assumeIsolated({ Updater.shared.available }) {
+        if AppInfo.isDev {
+            // 開発版は自動アップデートしない（製品版に置き換わってしまうため）
+        } else if let r = MainActor.assumeIsolated({ Updater.shared.available }) {
             menu.addItem(item("新しい版（\(r.version)）に更新…", #selector(installUpdate)))
         } else {
             menu.addItem(item("アップデートを確認…", #selector(checkForUpdates)))
         }
         menu.addItem(item("設定…", #selector(openSettings), key: ","))
-        menu.addItem(item("OilVoice を終了", #selector(quit), key: "q"))
+        menu.addItem(item("\(AppInfo.name) を終了", #selector(quit), key: "q"))
     }
 
     private func item(_ title: String, _ action: Selector, key: String = "") -> NSMenuItem {
@@ -171,7 +178,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc func openSettings() {
-        settingsWindow = showWindow(settingsWindow, title: "OilVoice 設定", view: SettingsView())
+        settingsWindow = showWindow(settingsWindow, title: "\(AppInfo.name) 設定", view: SettingsView())
     }
 
     @objc func openFileTranscription() {

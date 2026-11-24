@@ -3,7 +3,7 @@ import Security
 
 /// トークンや API キーをログインキーチェーンに置く
 enum Keychain {
-    private static let service = "jp.contrea.oilvoice"
+    private static var service: String { AppInfo.bundleID }
 
     static func get(_ account: String) -> String? {
         let q: [String: Any] = [

@@ -79,19 +79,18 @@ brew install cmake git
 ```sh
 git clone --recurse-submodules https://github.com/hirykawa/oilvoice.git
 cd oilvoice
-make
+make release
 ```
 
 - `--recurse-submodules` を付けると、speech.cpp と ggml も一緒に取得します。付け忘れたら `git submodule update --init --recursive` を実行してください。
-- 初回の `make` は speech.cpp のビルドを含むので数分かかります。2 回目以降はアプリ部分だけで数十秒です。
+- 初回のビルドは speech.cpp のビルドを含むので数分かかります。2 回目以降はアプリ部分だけで数十秒です。
 - できあがるのは `build/OilVoice.app`（約 9 MB）です。
+- `make`（`release` なし）は開発版の `build/OilVoice Dev.app` を作ります。下の「開発版と製品版」を見てください。
 
 ### 2. 起動する
 
 ```sh
-make run                      # ビルドして build/OilVoice.app を起動
-# または
-make install                  # /Applications/OilVoice.app にコピー
+make install                  # 製品版をビルドして /Applications/OilVoice.app にコピー
 open /Applications/OilVoice.app
 ```
 
@@ -128,7 +127,7 @@ pkill -x OilVoice
 
 # 更新
 git pull --recurse-submodules
-make                          # 必要なら make install も
+make install
 
 # speech.cpp ごと作り直す
 make distclean && make
@@ -136,7 +135,7 @@ make distclean && make
 # 削除
 rm -rf /Applications/OilVoice.app build
 rm -rf ~/Library/Application\ Support/OilVoice   # モデル
-defaults delete jp.contrea.oilvoice               # 設定
+defaults delete jp.contrea.oilvoice               # 設定（開発版は jp.contrea.oilvoice.dev）
 ```
 
 ### うまく動かないとき
@@ -153,15 +152,37 @@ defaults delete jp.contrea.oilvoice               # 設定
 動作の詳細は `~/Library/Logs/OilVoice.log` に出ます（`tail -f ~/Library/Logs/OilVoice.log` で見ながら試せます）。
 
 > 署名は ad-hoc ですが、指定要件をバンドル ID（`jp.contrea.oilvoice`）にしているので、ビルドし直してもアクセシビリティの許可は残ります。
-> 開発者証明書があれば `CODESIGN_IDENTITY="Developer ID Application: ..." make` で署名できます。
+> 開発者証明書があれば `CODESIGN_IDENTITY="Developer ID Application: ..." make release` で署名できます。
+
+### 開発版と製品版
+
+開発中は `make` / `make run` で **開発版（OilVoice Dev）** を作ります。製品版と同じ Mac に並べて入れられます。
+
+| | 製品版 | 開発版 |
+|---|---|---|
+| 作り方 | `make release`（`make install` で /Applications へ） | `make` / `make run` |
+| アプリ | `build/OilVoice.app` | `build/OilVoice Dev.app`（メニューバーに「Dev」と出る） |
+| バンドル ID | `jp.contrea.oilvoice` | `jp.contrea.oilvoice.dev` |
+| 設定・キーチェーン・許可 | 製品版のもの | 開発版だけのもの（初回にアクセシビリティとマイクの許可が要る） |
+| ログ | `~/Library/Logs/OilVoice.log` | `~/Library/Logs/OilVoice-Dev.log` |
+| 自動アップデート | する | しない |
+
+モデル（`~/Library/Application Support/OilVoice/Models/`）は共通なので、ダウンロードは 1 回で済みます。
+両方を同時に動かすときは、開発版のショートカットを製品版と別のキーにしてください（同じだと両方が反応します）。
+製品版の設定を開発版にコピーするには `defaults export jp.contrea.oilvoice - | defaults import jp.contrea.oilvoice.dev -` を実行します。
+
+### リリースを作る
+
+`Resources/Info.plist` の `CFBundleShortVersionString` を上げてから `make dist` を実行すると、`dist/` に DMG・ZIP・`SHA256SUMS.txt` ができます。
+この 3 つを GitHub のリリースに載せてください（アプリの自動アップデートは ZIP と `SHA256SUMS.txt` を使います）。
 
 ### 開発用：マイクなしで試す
 
 録音済みの音声ファイルをマイクの代わりに実時間で流し、起動と同時に入力を始められます。
 
 ```sh
-open --env OILVOICE_FEED="$PWD/sample.wav" --env OILVOICE_AUTOSTART=1 build/OilVoice.app
-tail -f ~/Library/Logs/OilVoice.log
+open --env OILVOICE_FEED="$PWD/sample.wav" --env OILVOICE_AUTOSTART=1 "build/OilVoice Dev.app"
+tail -f ~/Library/Logs/OilVoice-Dev.log
 ```
 
 `OILVOICE_OPEN_SETTINGS=1`（タブ番号）を付けると、起動時に設定画面を開きます。

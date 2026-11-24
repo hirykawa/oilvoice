@@ -1,12 +1,12 @@
 import Foundation
 
-/// ~/Library/Logs/OilVoice.log に書く簡単なログ
+/// ~/Library/Logs/OilVoice.log（開発版は OilVoice-Dev.log）に書く簡単なログ
 enum DebugLog {
     private static let queue = DispatchQueue(label: "oilvoice.log")
     private static let url: URL = {
         let dir = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask)[0].appendingPathComponent("Logs")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir.appendingPathComponent("OilVoice.log")
+        return dir.appendingPathComponent(AppInfo.isDev ? "OilVoice-Dev.log" : "OilVoice.log")
     }()
     private static let fmt: DateFormatter = { let f = DateFormatter(); f.dateFormat = "HH:mm:ss.SSS"; return f }()
 

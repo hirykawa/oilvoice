@@ -88,6 +88,12 @@ private struct GeneralTab: View {
                         catch { launchAtLogin = SMAppService.mainApp.status == .enabled }
                     }
             }
+            if AppInfo.isDev {
+                Section("アップデート") {
+                    Text("開発版（\(Updater.currentVersion)）は自動アップデートしません。製品版とは設定・許可が別です。")
+                        .foregroundColor(.secondary)
+                }
+            } else {
             Section("アップデート") {
                 Toggle("新しい版を自動で確認する（1 日 1 回）", isOn: $s.autoCheckUpdates)
                 HStack {
@@ -102,6 +108,7 @@ private struct GeneralTab: View {
                 }
                 Text("GitHub のリリースから新しい版をダウンロードして入れ替えます。設定・辞書・モデルはそのまま引き継がれます。")
                     .font(.caption).foregroundColor(.secondary)
+            }
             }
         }
         .formStyle(.grouped)

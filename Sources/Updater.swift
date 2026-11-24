@@ -8,6 +8,7 @@ import Security
 final class Updater: ObservableObject {
     static let shared = Updater()
     nonisolated static let repo = "hirykawa/oilvoice"
+    /// リリースの zip は製品版なので、開発版から確かめるときも製品版の ID で見る
     nonisolated static let bundleID = "jp.contrea.oilvoice"
 
     struct Release {
@@ -35,6 +36,7 @@ final class Updater: ObservableObject {
 
     /// 起動時に呼ぶ。少し待ってから確認し、その後も 1 日 1 回確認する。
     func start() {
+        guard !AppInfo.isDev else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in self?.autoCheck() }
         timer = Timer.scheduledTimer(withTimeInterval: 3 * 3600, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.autoCheck() }
