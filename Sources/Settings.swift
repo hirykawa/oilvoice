@@ -138,6 +138,7 @@ final class AppSettings: ObservableObject {
     @Published var aiPrompt: String
     @Published var aiTimeout: Double
     @Published var playSounds: Bool
+    @Published var autoCheckUpdates: Bool
 
     static let defaultPrompt = """
     あなたは音声入力の文字起こしを整える編集者です。入力は話し言葉をそのまま書き起こした日本語です。
@@ -175,6 +176,7 @@ final class AppSettings: ObservableObject {
         aiPrompt = d.string(forKey: "aiPrompt") ?? Self.defaultPrompt
         aiTimeout = d.object(forKey: "aiTimeout") as? Double ?? 12
         playSounds = d.object(forKey: "playSounds") as? Bool ?? true
+        autoCheckUpdates = d.object(forKey: "autoCheckUpdates") as? Bool ?? true
 
         // どの値が変わっても保存する
         objectWillChange
@@ -199,6 +201,7 @@ final class AppSettings: ObservableObject {
         d.set(aiPrompt, forKey: "aiPrompt")
         d.set(aiTimeout, forKey: "aiTimeout")
         d.set(playSounds, forKey: "playSounds")
+        d.set(autoCheckUpdates, forKey: "autoCheckUpdates")
     }
 
     /// Haas のカスタム語彙（`表記=読み,読み` を1行ずつ）

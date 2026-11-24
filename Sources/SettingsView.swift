@@ -51,6 +51,7 @@ struct SettingsView: View {
 
 private struct GeneralTab: View {
     @ObservedObject var s = AppSettings.shared
+    @ObservedObject var updater = Updater.shared
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
     @State private var axTrusted = HotkeyMonitor.hasAccessibility
 
@@ -86,6 +87,21 @@ private struct GeneralTab: View {
                         do { if on { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() } }
                         catch { launchAtLogin = SMAppService.mainApp.status == .enabled }
                     }
+            }
+            Section("アップデート") {
+                Toggle("新しい版を自動で確認する（1 日 1 回）", isOn: $s.autoCheckUpdates)
+                HStack {
+                    Text("今の版：\(Updater.currentVersion)")
+                    if !updater.status.isEmpty { Text(updater.status).foregroundColor(.secondary) }
+                    Spacer()
+                    if updater.available != nil {
+                        Button("更新…") { updater.offerAvailable() }.disabled(updater.busy)
+                    } else {
+                        Button("今すぐ確認") { Task { await updater.check(userInitiated: true) } }.disabled(updater.busy)
+                    }
+                }
+                Text("GitHub のリリースから新しい版をダウンロードして入れ替えます。設定・辞書・モデルはそのまま引き継がれます。")
+                    .font(.caption).foregroundColor(.secondary)
             }
         }
         .formStyle(.grouped)

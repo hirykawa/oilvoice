@@ -62,6 +62,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         Task { _ = await AudioRecorder.requestPermission() }
 
         prepareModel()
+        MainActor.assumeIsolated { Updater.shared.start() }
         if ProcessInfo.processInfo.environment["OILVOICE_OPEN_SETTINGS"] != nil { openSettings() }
     }
 
@@ -135,6 +136,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             menu.addItem(h)
         }
         menu.addItem(.separator())
+        if let r = MainActor.assumeIsolated({ Updater.shared.available }) {
+            menu.addItem(item("新しい版（\(r.version)）に更新…", #selector(installUpdate)))
+        } else {
+            menu.addItem(item("アップデートを確認…", #selector(checkForUpdates)))
+        }
         menu.addItem(item("設定…", #selector(openSettings), key: ","))
         menu.addItem(item("OilVoice を終了", #selector(quit), key: "q"))
     }
@@ -148,6 +154,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func menuToggle() {
         // メニューを閉じて元のアプリにフォーカスが戻ってから
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { self.toggle() }
+    }
+
+    @objc private func checkForUpdates() {
+        Task { await Updater.shared.check(userInitiated: true) }
+    }
+
+    @objc private func installUpdate() {
+        MainActor.assumeIsolated { Updater.shared.offerAvailable() }
     }
 
     @objc private func copyHistory(_ sender: NSMenuItem) {
